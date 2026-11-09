@@ -1,0 +1,214 @@
+{
+ "source": "Teaching and Evaluation Scheme, Semester-V, 2025-26 (NEP 2020) - syllabus image supplied by user",
+ "semester": "V",
+ "total_max": 725,
+ "pass_pct": 40,
+ "bands": {
+  "fcwd": 0.7,
+  "first": 0.6,
+  "second": 0.5
+ },
+ "header": [
+  "D. Y. PATIL COLLEGE OF ENGG. & TECH, KOLHAPUR",
+  "DEPARTMENT OF CSE(Artificial Intelligence and Machine Learning)",
+  "RESULT ANALYSIS (Final Year B.Tech) 2024-25 ( Sem- V )"
+ ],
+ "signatures": {
+  "Exam Coordinator": "Mr. R. S. Mirajkar",
+  "H.O.D": "Dr. S. V. Patil"
+ },
+ "subjects": {
+  "ML-I": {
+   "label": "ML I",
+   "name": "Machine Learning-I",
+   "group": "Theory",
+   "max": 100,
+   "counted": true,
+   "code": "231AIMLPCCL301"
+  },
+  "FST IV": {
+   "label": "FST IV",
+   "name": "Finishing School Training (MC, audit)",
+   "group": "Theory",
+   "max": 50,
+   "counted": false,
+   "code": "231AIMLMCL301"
+  },
+  "LL": {
+   "label": "LL",
+   "name": "Liberal Learning (CCA, audit)",
+   "group": "Theory",
+   "max": 50,
+   "counted": false,
+   "code": "231AIMLCCAP301"
+  },
+  "DE": {
+   "label": "DE",
+   "name": "Database Engineering",
+   "group": "Theory",
+   "max": 100,
+   "counted": true,
+   "code": "231AIMLPCCL302"
+  },
+  "CC": {
+   "label": "CC",
+   "name": "Cloud Computing",
+   "group": "Theory",
+   "max": 100,
+   "counted": true,
+   "code": "231AIMLPCCL303"
+  },
+  "DIP": {
+   "label": "DIP",
+   "name": "Digital Image Processing (PEC-I)",
+   "group": "Theory",
+   "max": 100,
+   "counted": true,
+   "code": "231AIMLPECL301"
+  },
+  "BCM": {
+   "label": "BCM",
+   "name": "BCM (MDM-3 option)",
+   "group": "MDM",
+   "max": 125,
+   "counted": true,
+   "code": "231AIMLMDML301"
+  },
+  "GFT": {
+   "label": "GFT",
+   "name": "GFT (MDM-3 option)",
+   "group": "MDM",
+   "max": 125,
+   "counted": true,
+   "code": "231AIMLMDML301"
+  },
+  "ORM": {
+   "label": "ORM",
+   "name": "ORM (MDM-3 option)",
+   "group": "MDM",
+   "max": 125,
+   "counted": true,
+   "code": "231AIMLMDML301"
+  },
+  "STP": {
+   "label": "STP",
+   "name": "STP (MDM-3 option)",
+   "group": "MDM",
+   "max": 125,
+   "counted": true,
+   "code": "231AIMLMDML301"
+  },
+  "DADL": {
+   "label": "DADL",
+   "name": "DADL (MDM-3 option)",
+   "group": "MDM",
+   "max": 125,
+   "counted": true,
+   "code": "231AIMLMDML301"
+  },
+  "Micro": {
+   "label": "Micro",
+   "name": "Micro (MDM-3 option)",
+   "group": "MDM",
+   "max": 125,
+   "counted": true,
+   "code": "231AIMLMDML301"
+  },
+  "SC": {
+   "label": "SC",
+   "name": "SC (OEC-III option)",
+   "group": "OE",
+   "max": 50,
+   "counted": true,
+   "code": "231AIMLOECL301"
+  },
+  "AAD": {
+   "label": "AAD",
+   "name": "AAD (OEC-III option)",
+   "group": "OE",
+   "max": 50,
+   "counted": true,
+   "code": "231AIMLOECL301"
+  },
+  "BAP": {
+   "label": "BAP",
+   "name": "BAP (OEC-III option)",
+   "group": "OE",
+   "max": 50,
+   "counted": true,
+   "code": "231AIMLOECL301"
+  },
+  "CSB": {
+   "label": "CSB",
+   "name": "CSB (OEC-III option)",
+   "group": "OE",
+   "max": 50,
+   "counted": true,
+   "code": "231AIMLOECL301"
+  },
+  "EIA": {
+   "label": "EIA",
+   "name": "EIA (OEC-III option)",
+   "group": "OE",
+   "max": 50,
+   "counted": true,
+   "code": "231AIMLOECL301"
+  },
+  "SQL": {
+   "label": "SQL",
+   "name": "SQL (OEC-III option)",
+   "group": "OE",
+   "max": 50,
+   "counted": true,
+   "code": "231AIMLOECL301"
+  },
+  "CIMS": {
+   "label": "CIMS",
+   "name": "CIMS (OEC-III option)",
+   "group": "OE",
+   "max": 50,
+   "counted": true,
+   "code": "231AIMLOECL301"
+  },
+  "SPSM": {
+   "label": "SPSM",
+   "name": "SPSM (OEC-III option)",
+   "group": "OE",
+   "max": 50,
+   "counted": true,
+   "code": "231AIMLOECL301"
+  },
+  "DIP-LAB": {
+   "label": "DIP-LAB",
+   "name": "Digital Image Processing Laboratory (PEC-I Lab)",
+   "group": "Lab",
+   "max": 25,
+   "counted": true,
+   "code": "231AIMLPECP301"
+  },
+  "ML-I LAB": {
+   "label": "ML-I LAB",
+   "name": "Machine Learning-I Laboratory",
+   "group": "Lab",
+   "max": 50,
+   "counted": true,
+   "code": "231AIMLPCCP301"
+  },
+  "DE- LAb": {
+   "label": "DE- Lab",
+   "name": "Database Engineering Laboratory",
+   "group": "Lab",
+   "max": 50,
+   "counted": true,
+   "code": "231AIMLPCCP302"
+  },
+  "CC-LAB": {
+   "label": "CC-LAB",
+   "name": "Cloud Computing Laboratory",
+   "group": "Lab",
+   "max": 25,
+   "counted": true,
+   "code": "231AIMLPCCP303"
+  }
+ }
+}

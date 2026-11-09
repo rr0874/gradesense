@@ -1,0 +1,15 @@
+venv/
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.env
+.streamlit/secrets.toml
+.pytest_cache/
+# Excel files may contain private student data
+*.xlsx
+
+# Generated analysis files
+*.csv
+*.db
+*.sqlite3
