@@ -18,7 +18,7 @@ AFTER = {"gr": "grade", "cr pt": "credits", "cr er": "earned", "pt": "gpoints", 
 MAXCOL = {"ise": "max_ise", "mse": "max_mse", "ese": "max_ese", "int": "max_int", "poe": "max_oe_poe"}
 NUMF = ["ise", "mse", "internal", "int", "ese", "poe", "other", "total", "credits", "earned", "gpoints"]
 ALLF = ["ise", "mse", "internal", "int", "ese", "poe", "other", "total", "grade", "credits", "earned", "gpoints", "status"]
-SUBJ_RX = r"\(\s*[A-Za-z0-9]{6,}(?:-\d+)?(?:\([^()]*\))?\s*\)\s*$"
+SUBJ_RX = r"\(\s*[A-Za-z0-9][A-Za-z0-9 ]{4,}[A-Za-z0-9](?:-\d+)?(?:\([^()]*\))?\s*\)\s*$"
 
 @dataclass
 class Workbook:
@@ -436,8 +436,8 @@ def read_workbook(src, sheet=0, include_mse_rows=False) -> Workbook:
         for j, c in enumerate(starts):
             end = starts[j + 1] if j + 1 < len(starts) else s0
             head = next((str(v) for v in raw.iloc[srow, c:end] if pd.notna(v) and str(v).strip()), "")
-            m = re.match(r"^\s*(.+?)\s*\(\s*([A-Za-z0-9]{6,}(?:-\d+)?(?:\([^()]*\))?)\s*\)\s*$", head)
-            abbr, code = (m.group(1).strip(), m.group(2)) if m else (head.strip(),) * 2
+            m = re.match(r"^\s*(.+?)\s*\(\s*([A-Za-z0-9][A-Za-z0-9 ]{4,}[A-Za-z0-9](?:-\d+)?(?:\([^()]*\))?)\s*\)\s*$", head)
+            abbr, code = (m.group(1).strip(), re.sub(r"\s+", "", m.group(2))) if m else (head.strip(),) * 2
             labels = [_norm(raw.iat[sub, k]) for k in range(c, end)]
             names, extra = _fields(labels, f"Term {label}, {abbr}")
             if extra: warnings.append(f"Term {label}, {abbr}: ignored extra columns {extra}")

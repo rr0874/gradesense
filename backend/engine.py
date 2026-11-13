@@ -141,9 +141,8 @@ class Engine:
         return term == self.last and "cgpa" in self.S and self.S.cgpa.notna().any()
 
     def _requested_metric(self, e):
-        if "cgpa" in e.low and self._cgpa_available(e.term):
-            return "cgpa"
-        return "sgpa"
+        """CGPA is the only ranking metric whenever the file has it; SGPA is used only when there is no CGPA."""
+        return "cgpa" if self._cgpa_available(e.term) else "sgpa"
 
     def base(self, term):
         if term not in self._base:
@@ -155,7 +154,7 @@ class Engine:
         return self._base[term]
 
     def examples(self):
-        b = self.base(self.last); nm = b.sort_values("sgpa", ascending=False).name.iloc[0] if len(b) else "a student"
+        b = self.base(self.last).copy(); b["rk"] = b.enroll.map(self.S.cgpa) if self._cgpa_available(self.last) else b.sgpa; nm = b.sort_values("rk", ascending=False).name.iloc[0] if len(b) else "a student"
         c = [r for r in self.subj[(self.subj.term == self.last) & self.subj.is_common].itertuples()]
         ex = ["Class summary", "Who failed?", "Top 5 students", "Pass percentage"]
         if c: ex.append(f"Who failed in {c[0].label}?")
@@ -338,8 +337,13 @@ class Engine:
     def a_absent_list(self, e): return self.a_fail_list(e, absent=True)
 
     def a_pass_list(self, e):
-        b = self.base(e.term); d = b[b.backlogs == 0].sort_values("sgpa", ascending=False)
-        t = d.rename(columns={"name": "Name", "enroll": "Enrollment", "sgpa": "SGPA", "pct": "%"})[["Name", "Enrollment", "SGPA", "%"]]
+        b = self.base(e.term); d = b[b.backlogs == 0].copy()
+        if self._cgpa_available(e.term):
+            d["cgpa"] = d.enroll.map(self.S.cgpa); d = d.sort_values(["cgpa", "sgpa"], ascending=False)
+            t = d.rename(columns={"name": "Name", "enroll": "Enrollment", "cgpa": "CGPA", "sgpa": "SGPA", "pct": "%"})[["Name", "Enrollment", "CGPA", "SGPA", "%"]]
+        else:
+            d = d.sort_values("sgpa", ascending=False)
+            t = d.rename(columns={"name": "Name", "enroll": "Enrollment", "sgpa": "SGPA", "pct": "%"})[["Name", "Enrollment", "SGPA", "%"]]
         return Answer(f"{len(d)} of {len(b)} students cleared every subject{self._ctx(e)}.", _tab(t))
 
     def a_grade_list(self, e):
@@ -618,7 +622,7 @@ class Engine:
 
     def a_metric_filter(self, e):
         op, v, pct = e.cmps[0]; low = e.low; b = self.base(e.term)
-        if "cgpa" in low and self._cgpa_available(e.term): d = self.S.rename(columns={"cgpa": "val"})[["name", "enroll", "val"]].dropna(subset=["val"]); metric = "CGPA (cumulative)"
+        if not (pct or re.search(r"percent|%", low)) and self._cgpa_available(e.term): d = self.S.rename(columns={"cgpa": "val"})[["name", "enroll", "val"]].dropna(subset=["val"]); metric = "CGPA (cumulative)"
         elif pct or re.search(r"percent|%", low): d = b.rename(columns={"pct": "val"})[["name", "enroll", "val"]]; metric = "percentage"
         else: d = b.rename(columns={"sgpa": "val"})[["name", "enroll", "val"]]; metric = "SGPA"
         d = d[_cmp(d.val, op, v)].sort_values("val", ascending=op in ("<", "<="))

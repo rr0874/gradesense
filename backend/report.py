@@ -31,327 +31,223 @@ def _merge(ws, rng, v, **k):
     for row in ws[rng]:
         for c in row: c.border = THIN
 
-def build_generic_report(ds, term, path):
-    """Build a scheme-independent, value-based report from the validated parsed workbook."""
+# ---- plain, staff-style report for ANY parsed workbook (no scheme file needed) -------------------------------------
+HIGHLIGHT = "FFF2CC"                       # the only colour used: title + header band (Excel light gold); change freely
+CLASS_BANDS = ((8.0, "Distinction"), (7.0, "First Class"), (6.0, "Second Class"), (5.0, "Pass Class"))   # CGPA (or SGPA) >= value
+SUBJECT_CLASS = {"FCWD": ("O", "A+", "A"), "First Class": ("B+", "B"), "Second Class": ("C",), "Pass Class": ("P",)}   # subject grade -> class
+STD_MAX = (10, 15, 20, 25, 30, 40, 50, 60, 70, 75, 80, 100)
+PASS_FRACTION = 0.4                        # passing marks / maximum marks, used only when the sheet prints no maximum
+DEFAULT_COLLEGE = "D. Y. PATIL COLLEGE OF ENGG. & TECH, KOLHAPUR"
+DEFAULT_DEPARTMENT = "DEPARTMENT OF CSE (Artificial Intelligence and Machine Learning)"   # pass department= to build_generic_report per file
+GROUP_ORDER = ("Theory", "MDM", "OE", "Elective", "Laboratory")
+_PLAIN = lambda **k: Font(name="Calibri", size=11, **k)
+_MED, _THIN = Side(style="medium"), Side(style="thin")
+
+def _group(row):
+    """Theory / MDM / OE / Laboratory from the subject's own type, name and code; unknown -> Theory."""
+    name, code, typ = str(row.label), str(row.code), str(getattr(row, "type", ""))
+    code = re.sub(r"\s+", "", code)
+    if typ == "MDM" or "MDM" in code.upper() or re.search(r"\(\s*MDM\s*\)", name, re.I): return "MDM"
+    if typ == "OEC" or re.search(r"OEC|\(\s*OE\s*\)", code + " " + name, re.I): return "OE"
+    if pd.notna(getattr(row, "credits", float("nan"))) and row.credits == 0: return "Theory"      # zero-credit audit courses (FST, LLC ...) sit with Theory
+    if getattr(row, "part", "") == "Practical" or re.search(r"\blab\b|\(lab\)|lab$", name, re.I) or re.search(r"P\d{3}$", code): return "Laboratory"
+    if re.search(r"PEC|PE[LM]\d{3}$|ELECTIVE", code.upper() + " " + name.upper()): return "Elective"
+    return "Theory"
+
+def _max_marks(row, observed):
+    """Maximum marks of a subject: printed maximum if the sheet has one, else passing marks / 40 %, never below the highest mark seen."""
+    if pd.notna(row.max_total) and row.max_total > 0: return float(row.max_total)
+    est = (float(row.int_pass or 0) + float(row.ext_pass or 0)) / PASS_FRACTION if pd.notna(row.int_pass) or pd.notna(row.ext_pass) else 0
+    if pd.isna(observed): return est or None
+    if est >= observed and est > 0: return est
+    return next((float(m) for m in STD_MAX if m >= observed), None)
+
+def _grade_class(g):
+    g = re.sub(r"[^A-Za-z+]", "", str(g)).upper()
+    return next((c for c, gs in SUBJECT_CLASS.items() if g in gs), None)
+
+def rank_metric(student_report):
+    """CGPA is the first priority whenever the file has it; SGPA only when there is no CGPA at all."""
+    for m in ("cgpa", "sgpa"):
+        if m in student_report and student_report[m].notna().any(): return m
+    return None
+
+def _class_of(score):
+    return "" if pd.isna(score) else next((n for lim, n in CLASS_BANDS if score >= lim), "")
+
+def _write_table(ws, title, sub, frame, cols, groups, maxrow, total_max, last_fixed):
+    """cols: [(key, heading)] fixed/summary columns; groups: [(group, [(key, subject, max)])]. Header = rows 1-5 like the staff sheet."""
+    box = Border(_THIN, _THIN, _THIN, _THIN)
+    fixed = [c for c in cols if c[0] in ("rank", "enroll", "name")]; tail = [c for c in cols if c not in fixed]
+    n_sub = sum(len(g[1]) for g in groups); last = len(fixed) + n_sub + len(tail)
+    def put(r, c, v, bold=False, fill=False, edge=True, fmt=None):
+        cell = ws.cell(r, c, v); cell.font = _PLAIN(bold=bold); cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        if edge: cell.border = box
+        if fill: cell.fill = PatternFill("solid", fgColor=HIGHLIGHT)
+        if fmt: cell.number_format = fmt
+        return cell
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=last); put(1, 1, title, True, True)
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=last); put(2, 1, sub, False, False, False)
+    ws.cell(2, 1).alignment = Alignment(horizontal="center")
+    for i, (k, h) in enumerate(fixed, 1):
+        ws.merge_cells(start_row=3, start_column=i, end_row=7, end_column=i); put(3, i, h, True, True)
+        for r in range(3, 8): ws.cell(r, i).border = box
+    c = len(fixed) + 1; keycol = {}
+    for g, items in groups:
+        if g and len(items):
+            ws.merge_cells(start_row=3, start_column=c, end_row=4, end_column=c + len(items) - 1); put(3, c, g, True, True)
+            for r in (3, 4):
+                for cc in range(c, c + len(items)): ws.cell(r, cc).border = box
+        for k, subj, mx in items:
+            put(5, c, subj, True, True); put(6, c, mx); put(7, c, "Tot.", True, True); keycol[k] = c; c += 1
+    for k, h in tail:
+        ws.merge_cells(start_row=3, start_column=c, end_row=6, end_column=c); put(3, c, h, True, True)
+        for r in range(3, 7): ws.cell(r, c).border = box
+        put(7, c, total_max if k == "total" else None, True); keycol[k] = c; c += 1
+    for i, k in enumerate([k for k, _ in fixed], 1): keycol[k] = i
+    for r, row in enumerate(frame.to_dict("records"), 8):
+        for k, col in keycol.items():
+            v = row.get(k); v = None if v is None or (isinstance(v, float) and pd.isna(v)) else v
+            cell = ws.cell(r, col, v); cell.font = _PLAIN(); cell.border = box
+            if isinstance(v, float): cell.number_format = "0.00" if k in ("cgpa", "sgpa") else "0.##"
+            cell.alignment = Alignment(horizontal="left" if k == "name" else "center", vertical="center")
+    ws.column_dimensions["A"].width = 7; ws.column_dimensions["B"].width = 16; ws.column_dimensions["C"].width = 30
+    for col in range(len(fixed) + 1, last + 1): ws.column_dimensions[L(col)].width = 11
+    ws.freeze_panes = f"{L(len(fixed) + 1)}8"
+
+def _banner(ws, last, rows):
+    box = Border(_THIN, _THIN, _THIN, _THIN)
+    for r, text in rows:
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=last)
+        c = ws.cell(r, 1, text); c.font = _PLAIN(bold=True); c.alignment = Alignment(horizontal="center", vertical="center")
+        if r == rows[0][0]: c.fill = PatternFill("solid", fgColor=HIGHLIGHT)
+
+def _subjectwise_sheet(ws, college, department, term, groups, items, marks):
+    """Subject Wise Result Analysis: one column per subject; counts come from the subject's own status and grade columns."""
+    box = Border(_THIN, _THIN, _THIN, _THIN)
+    keys = [k for _, its in groups for k, *_ in its]; last = 4 + len(keys)
+    _banner(ws, last, [(1, college), (2, department), (3, f"RESULT ANALYSIS (Term - {term})")])
+    ws.merge_cells(start_row=5, start_column=1, end_row=5, end_column=last)
+    c = ws.cell(5, 1, "Subject Wise Result Analysis"); c.font = _PLAIN(bold=True); c.alignment = Alignment(horizontal="center")
+    def put(r, c, v, bold=False, fill=False, fmt=None):
+        cell = ws.cell(r, c, v); cell.font = _PLAIN(bold=bold); cell.border = box; cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        if fill: cell.fill = PatternFill("solid", fgColor=HIGHLIGHT)
+        if fmt: cell.number_format = fmt
+    ws.merge_cells("A7:D8"); put(7, 1, "Subjects", True, True)
+    for r in (7, 8):
+        for cc in range(1, 5): ws.cell(r, cc).border = box
+    col = 5; code_of = {k: code for k, _, _, _, code, _ in items}; mx_of = {k: m for k, _, m, *_ in items}
+    labels = ["No of Students Appeared", "No of Result Declared", "No. of Students with FCWD", "No. of Students with First Class",
+              "No. of Students with Second Class", "No. of Students with pass class", "No. of Students with Failed",
+              "No of Students Passed", "No of Students Absent", "Subject percentage   %"]
+    ws.merge_cells("A9:D9"); put(9, 1, None)
+    for i, t in enumerate(labels, 10):
+        ws.merge_cells(start_row=i, start_column=1, end_row=i, end_column=4); put(i, 1, t, True)
+        for cc in range(1, 5): ws.cell(i, cc).border = box
+    for g, its in groups:
+        if its:
+            ws.merge_cells(start_row=7, start_column=col, end_row=7, end_column=col + len(its) - 1); put(7, col, g, True, True)
+            for cc in range(col, col + len(its)): ws.cell(7, cc).border = box
+        for k, name, mx, *_ in its:
+            m = marks[marks.code == code_of[k]]; st = m.status.astype(str).str.strip()
+            passed, failed, absent = int(st.eq("Pass").sum()), int(st.eq("Fail").sum()), int(st.eq("AB").sum())
+            appeared = passed + failed + absent
+            cls = m[st.eq("Pass")].grade.map(_grade_class) if m.grade.astype(str).str.strip().replace({"nan": "", "None": ""}).ne("").any() else None
+            cnt = [None if cls is None else int(cls.eq(c).sum()) for c in ("FCWD", "First Class", "Second Class", "Pass Class")]
+            vals = [appeared, passed + failed, *cnt, failed, passed, absent, round(100 * passed / appeared, 2) if appeared else None]
+            put(8, col, name, True, True); put(9, col, mx)
+            for i, v in enumerate(vals, 10): put(i, col, v, fmt="0.00" if i == 19 else None)
+            ws.column_dimensions[L(col)].width = max(9, min(14, len(name) + 2)); col += 1
+    for cc in "ABCD": ws.column_dimensions[cc].width = 9
+    ws.freeze_panes = "E10"
+
+def _counts_sheet(ws, S, metric, college, department, term):
+    """Overall counts (class bands, failed/ATKT, passed, absent, pass %) and the top 3 by the ranking metric."""
+    box = Border(_THIN, _THIN, _THIN, _THIN)
+    _banner(ws, 10, [(1, college), (2, department), (3, f"RESULT ANALYSIS (Term - {term})")])
+    st = S.status.astype(str).str.strip().str.casefold(); n = len(S)
+    cls = S["class"]; passed = int(st.eq("pass").sum())
+    rows = [("Total students", n)] + [(f"No. of Students with {nm}", int(cls.eq(nm).sum())) for _, nm in CLASS_BANDS] + [
+            ("No. of Students Failed / ATKT", int(st.str.contains("fail|atkt").sum())), ("No. of Students Passed", passed),
+            ("No. of Students Absent", int(st.isin(["ab", "absent"]).sum())), ("Overall pass percentage", passed / n if n else None)]
+    rows[1] = ("No. of Students with Distinction", rows[1][1])
+    rows[4] = ("No. of Students with pass class", rows[4][1])
+    for i, (lab, v) in enumerate(rows, 5):
+        ws.merge_cells(start_row=i, start_column=1, end_row=i, end_column=4)
+        c = ws.cell(i, 1, lab); c.font = _PLAIN(bold=True)
+        for cc in range(1, 5): ws.cell(i, cc).border = box
+        c = ws.cell(i, 5, v); c.font = _PLAIN(); c.border = box; c.alignment = Alignment(horizontal="center")
+        if lab == "Overall pass percentage": c.number_format = "0.00%"
+    if metric:
+        ws.merge_cells("G5:J5"); c = ws.cell(5, 7, f"Top 3 by {metric.upper()}"); c.font = _PLAIN(bold=True); c.fill = PatternFill("solid", fgColor=HIGHLIGHT)
+        for cc in range(7, 11): ws.cell(5, cc).border = box
+        top = S.dropna(subset=[metric]).sort_values(metric, ascending=False, kind="stable").head(3)
+        for i, r in enumerate(top.itertuples(), 6):
+            for cc, v in zip(range(7, 11), (f"{i - 5}.", r.name, getattr(r, metric), r.enroll)):
+                c = ws.cell(i, cc, v); c.font = _PLAIN(); c.border = box
+                c.alignment = Alignment(horizontal="left" if cc == 8 else "center")
+                if cc == 9: c.number_format = "0.00"
+    for cc, w in zip("ABCDEFGHIJ", (9, 9, 9, 9, 12, 3, 5, 30, 8, 16)): ws.column_dimensions[cc].width = w
+
+def build_generic_report(ds, term, path, college=DEFAULT_COLLEGE, department=DEFAULT_DEPARTMENT):
+    """Plain staff-style result analysis for any parsed workbook: one row per student, subjects grouped, max row, Tot. row,
+    Total / CGPA / Grade / Status / Class. Ranked by CGPA when the file has one, else by SGPA. Failed students' full rows go on a second sheet."""
     wb = ds.wb
-    if term not in set(wb.terms.term):
-        raise ValueError(f"Term {term} is not present in the workbook.")
-
-    subjects = wb.subjects[wb.subjects.term == term].copy().reset_index(drop=True)
-    marks = wb.marks[wb.marks.term == term].copy()
-    term_results = wb.terms[wb.terms.term == term].drop(columns="term_n", errors="ignore")
-    active_enrollments = set(term_results.enroll) | set(marks.enroll)
-    students = wb.students[wb.students.enroll.isin(active_enrollments)].copy().merge(
-        term_results, on="enroll", how="left")
-    if students.empty or subjects.empty or marks.empty:
-        raise ValueError(f"Term {term} has no student or subject records to report.")
-    if marks.duplicated(["enroll", "code"]).any():
-        raise ValueError(f"Term {term} contains duplicate student-course rows; resolve these before exporting.")
-
-    labels = subjects.set_index("code").label.to_dict()
-    used = set()
-    display = {}
-    for row in subjects.itertuples():
-        name = str(row.label).strip() or str(row.abbr).strip() or str(row.code)
-        if name.casefold() in used:
-            name = f"{name} [{row.code}]"
-        used.add(name.casefold())
-        display[row.code] = name
-    marks["Subject"] = marks.code.map(display)
-    if marks.Subject.isna().any():
-        raise ValueError(f"Term {term} has result rows for courses not present in its subject list.")
-    subject_keys = {row.code: f"__course_{index}" for index, row in enumerate(subjects.itertuples())}
-    marks["__subject_key"] = marks.code.map(subject_keys)
-    pivot = marks.pivot(index="enroll", columns="__subject_key", values="total")
-    pivot = pivot.reindex(columns=list(subject_keys.values()))
-    student_report = students.merge(pivot, left_on="enroll", right_index=True, how="left")
-
-    if term == wb.terms.sort_values("term_n").iloc[-1].term and not wb.cumulative.empty:
-        cumulative = wb.cumulative.copy()
-        student_report = student_report.merge(cumulative, on="enroll", how="left", suffixes=("", "_cumulative"))
-    elif "cgpa" not in student_report:
-        student_report["cgpa"] = float("nan")
-
-    latest = term == wb.terms.sort_values("term_n").iloc[-1].term
-    if latest and "status" in student_report:
-        outcomes = student_report.status.fillna("").astype(str).str.strip()
-    else:
-        def derive_outcome(values):
-            values = values.dropna().astype(str).str.strip()
-            if values.eq("Fail").any(): return "Fail"
-            if values.eq("AB").any(): return "AB"
-            if len(values) and values.eq("Pass").all(): return "Pass"
-            return "Unreported"
-        outcomes = marks.groupby("enroll").status.apply(derive_outcome)
-        outcomes = student_report.enroll.map(outcomes).fillna("No result")
-    student_report["Outcome"] = outcomes
-    student_report["Result total"] = marks.groupby("enroll").total.sum(min_count=1).reindex(student_report.enroll).to_numpy()
-    student_report["Backlog / non-pass subjects"] = student_report.enroll.map(
-        marks[marks.status.isin(["Fail", "AB"])].groupby("enroll").Subject.apply(
-            lambda values: ", ".join(values.astype(str))))
-
-    score = "sgpa" if "sgpa" in student_report and student_report.sgpa.notna().any() else "cgpa"
-    if score not in student_report:
-        student_report[score] = float("nan")
-    student_report = student_report.sort_values(
-        score, ascending=False, na_position="last", kind="stable").reset_index(drop=True)
-    student_report.insert(0, "Rank", range(1, len(student_report) + 1))
-
-    subject_stats = []
-    for row in subjects.itertuples():
-        result = marks[marks.code == row.code]
-        maximum = row.max_total
-        maximum = float(maximum) if pd.notna(maximum) and maximum > 0 else None
-        average = result.total.mean() if result.total.notna().any() else None
-        subject_stats.append({
-            "Subject": display[row.code],
-            "Course code": row.code,
-            "Students with results": int(len(result)),
-            "Passed": int(result.status.eq("Pass").sum()),
-            "Failed": int(result.status.eq("Fail").sum()),
-            "Absent": int(result.status.eq("AB").sum()),
-            "Pass rate (%)": round(100 * result.status.eq("Pass").mean(), 2) if len(result) else None,
-            "Average marks": round(float(average), 2) if average is not None else None,
-            "Maximum marks (from source)": maximum,
-            "Average marks (%)": round(100 * average / maximum, 2) if average is not None and maximum else None,
-            "Credits (from source)": float(row.credits) if pd.notna(row.credits) else None,
-        })
-    subject_frame = pd.DataFrame(subject_stats)
-
-    book = Workbook()
-    overview = book.active
-    overview.title = "subjectwise"
-    result_sheet = book.create_sheet("Student Results")
-    result_sheet.title = "Result_Analysis"
-    subjects_sheet = overview
-    source_sheet = book.create_sheet("Data")
-    notes_sheet = book.create_sheet("Notes")
-    navy = "17365D"
-    pale = "E8EFF7"
-    gold = "B08A35"
-    thin_grey = Side(style="thin", color="D8E0EA")
-    header_fill = PatternFill("solid", fgColor=navy)
-    sub_fill = PatternFill("solid", fgColor=pale)
-    title_font = Font(name="Aptos Display", size=18, bold=True, color=navy)
-    header_font = Font(name="Aptos", size=10, bold=True, color="FFFFFF")
-    body_font = Font(name="Aptos", size=10, color="243247")
-
-    def format_table(ws, header_row, first_col=1, last_col=None, freeze=None):
-        last_col = last_col or ws.max_column
-        for cell in ws[header_row][first_col - 1:last_col]:
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = Alignment(vertical="center", wrap_text=True)
-            cell.border = Border(bottom=Side(style="medium", color=gold))
-        ws.row_dimensions[header_row].height = 32
-        for row in ws.iter_rows(min_row=header_row + 1, max_col=last_col):
-            for cell in row:
-                cell.font = body_font
-                cell.alignment = Alignment(
-                    horizontal="center" if isinstance(cell.value, (int, float)) else "left",
-                    vertical="center", wrap_text=True)
-                cell.border = Border(bottom=thin_grey)
-                if cell.data_type == "n":
-                    cell.number_format = "0.##"
-        ws.freeze_panes = freeze or f"A{header_row + 1}"
-        ws.auto_filter.ref = f"{L(first_col)}{header_row}:{L(last_col)}{max(header_row, ws.max_row)}"
-        ws.sheet_view.showGridLines = False
-        ws.sheet_view.zoomScale = 90
-        ws.sheet_properties.pageSetUpPr.fitToPage = True
-        ws.page_setup.fitToWidth = 1
-        ws.page_setup.fitToHeight = 0
-        ws.page_setup.orientation = "landscape"
-
-    # The first tab summarizes per-subject results in the staff workbook's familiar layout.
-    overview.sheet_view.showGridLines = False
-    overview.sheet_view.zoomScale = 95
-    overview["A1"] = "Subject-wise Result Analysis"
-    overview["A1"].font = title_font
-    overview.merge_cells("A1:D1")
-    overview["A2"] = f"Term {term} · {ds.name} · {len(students):,} students"
-    overview["A2"].font = Font(name="Aptos", size=11, color="64748B")
-    overview.merge_cells("A2:D2")
-    metric_name = "CGPA" if score == "cgpa" else "SGPA"
-    overview["A4"] = "Measure"
-    overview["B4"] = "Result"
-    for cell in overview[4][:2]:
-        cell.fill, cell.font = header_fill, header_font
-    stats = [
-        ("Students appeared", len(students)),
-        ("Subjects in term", len(subjects)),
-        ("Students recorded as passed", overall_pass := int(student_report.Outcome.eq("Pass").sum())),
-        ("Students failed / ATKT", int(student_report.Outcome.isin(["Fail", "ATKT"]).sum())),
-        ("Students absent", int(student_report.Outcome.eq("AB").sum())),
-        ("Pass percentage (%)", round(100 * overall_pass / len(students), 2) if len(students) else None),
-    ]
-    for row_idx, (label, value) in enumerate(stats, 5):
-        overview.cell(row_idx, 1, label)
-        overview.cell(row_idx, 2, value)
-        overview.cell(row_idx, 1).font = Font(name="Aptos", size=10, color="243247")
-        overview.cell(row_idx, 2).font = Font(name="Aptos", size=10, bold=True, color=navy)
-        for cell in overview[row_idx][:2]:
-            cell.border = Border(bottom=thin_grey)
-            cell.alignment = Alignment(vertical="center")
-    overview["D4"] = f"Top performers by {metric_name}"
-    overview.merge_cells("D4:F4")
-    overview["D4"].fill, overview["D4"].font = header_fill, header_font
-    top_performers = student_report.dropna(subset=[score]).head(3)
-    for row_idx, (_, student) in enumerate(top_performers.iterrows(), 5):
-        overview.cell(row_idx, 4, f"{row_idx - 4}{'st' if row_idx == 5 else 'nd' if row_idx == 6 else 'rd'}")
-        overview.cell(row_idx, 5, student["name"])
-        overview.cell(row_idx, 6, student[score])
-        overview.cell(row_idx, 6).number_format = "0.00"
-        for cell in overview[row_idx][3:6]:
-            cell.border = Border(bottom=thin_grey)
-            cell.alignment = Alignment(vertical="center")
-    overview["D9"] = "Ranking metric"
-    overview["E9"] = metric_name
-    overview["D9"].font = Font(name="Aptos", size=9, color="64748B")
-    overview["E9"].font = Font(name="Aptos", size=9, bold=True, color=navy)
-    overview["A12"] = "Subject results"
-    overview["A12"].font = Font(name="Aptos", size=13, bold=True, color=navy)
-    for col, title in enumerate(subject_frame.columns, 1):
-        overview.cell(13, col, title)
-    for row_idx, values in enumerate(subject_frame.itertuples(index=False, name=None), 10):
-        for col, value in enumerate(values, 1):
-            overview.cell(row_idx + 4, col, value)
-    format_table(overview, 13, last_col=len(subject_frame.columns), freeze="A14")
-    for col, width in enumerate([30, 20, 16, 12, 12, 12, 15, 16, 22, 18, 17], 1):
-        overview.column_dimensions[L(col)].width = width
-
-    details = student_report[["Rank", "enroll", "name"]].rename(
-        columns={"enroll": "Enrollment", "name": "Student name"}).copy()
-    if "seat" in student_report:
-        details.insert(3, "Seat number", student_report["seat"].to_numpy())
-    subject_columns = list(pivot.columns)
-    subject_display_keys = {key: display[code] for code, key in subject_keys.items()}
-    for subject in subject_columns:
-        details[subject] = student_report[subject].to_numpy()
-    for source_column, display_name in (
-        ("Result total", "Result total"), ("sgpa", "SGPA"), ("cgpa", "CGPA"),
-        ("pct", "Percentage (%)"), ("grade", "Overall grade"), ("Outcome", "Overall status"),
-        ("Backlog / non-pass subjects", "Non-pass / absent subjects"),
-    ):
-        if source_column in student_report:
-            details[display_name] = student_report[source_column].to_numpy()
-
-    # Familiar staff-style student table, with bounded widths and explicit panes.
-    result_sheet.sheet_view.showGridLines = False
-    result_sheet.sheet_view.zoomScale = 75
-    last_column = len(details.columns)
-    result_sheet["A1"] = f"RESULT ANALYSIS — TERM {term}"
-    result_sheet["A1"].font = title_font
-    result_sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=last_column)
-    result_sheet["A2"] = f"{ds.name} · Ranked by {metric_name} · {len(students):,} students · {len(subjects)} subjects"
-    result_sheet["A2"].font = Font(name="Aptos", size=10, color="64748B")
-    result_sheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=last_column)
-    result_sheet["A4"] = "Class summary"
-    result_sheet["A4"].font = Font(name="Aptos", size=12, bold=True, color=navy)
-    for row_idx, (label, value) in enumerate(stats, 5):
-        result_sheet.cell(row_idx, 1, label)
-        result_sheet.cell(row_idx, 2, value)
-        result_sheet.cell(row_idx, 1).font = Font(name="Aptos", size=9, color="243247")
-        result_sheet.cell(row_idx, 2).font = Font(name="Aptos", size=9, bold=True, color=navy)
-        for cell in result_sheet[row_idx][:2]:
-            cell.border = Border(bottom=thin_grey)
-    result_sheet["D4"] = f"Top performers · {metric_name}"
-    result_sheet.merge_cells("D4:F4")
-    result_sheet["D4"].fill, result_sheet["D4"].font = header_fill, header_font
-    for row_idx, (_, student) in enumerate(top_performers.iterrows(), 5):
-        result_sheet.cell(row_idx, 4, f"{row_idx - 4}")
-        result_sheet.cell(row_idx, 5, student["name"])
-        result_sheet.cell(row_idx, 6, student[score])
-        result_sheet.cell(row_idx, 6).number_format = "0.00"
-        for cell in result_sheet[row_idx][3:6]:
-            cell.border = Border(bottom=thin_grey)
-            cell.alignment = Alignment(vertical="center", wrap_text=True)
-    result_sheet["A12"] = "Student results"
-    result_sheet["A12"].font = Font(name="Aptos", size=13, bold=True, color=navy)
-
-    for col, name in enumerate(details.columns, 1):
-        heading = str(name)
-        if name in subject_columns:
-            course_code = next(code for code, key in subject_keys.items() if key == name)
-            source = subjects[subjects.code == course_code]
-            maximum = source.iloc[0].max_total if len(source) else None
-            max_text = f"{maximum:g}" if pd.notna(maximum) and maximum > 0 else "not stated"
-            heading = f"{subject_display_keys[name]}\n{course_code}\nMax: {max_text}"
-        result_sheet.cell(14, col, heading)
-    for row_idx, values in enumerate(details.itertuples(index=False, name=None), 15):
-        for col, value in enumerate(values, 1):
-            result_sheet.cell(row_idx, col, None if pd.isna(value) else value)
-    format_table(result_sheet, 14, last_col=len(details.columns), freeze="D15")
-    result_sheet.row_dimensions[14].height = 58
-    for col, name in enumerate(details.columns, 1):
-        width = 14
-        if name == "Enrollment": width = 19
-        elif name == "Student name": width = 26
-        elif name == "Seat number": width = 13
-        elif name in subject_columns: width = 17
-        elif name == "Non-pass / absent subjects": width = 34
-        elif name == "Overall status": width = 17
-        result_sheet.column_dimensions[L(col)].width = width
-    result_sheet.auto_filter.ref = f"A14:{L(last_column)}{result_sheet.max_row}"
-    result_sheet.freeze_panes = "E15" if "Seat number" in details else "D15"
-    result_sheet.print_title_rows = "1:14"
-    result_sheet.page_setup.fitToWidth = 1
-    result_sheet.page_setup.fitToHeight = 0
-
-    for col, width in enumerate([30, 20, 16, 12, 12, 12, 15, 16, 22, 18, 17], 1):
-        overview.column_dimensions[L(col)].width = width
-
-    identity = wb.students[["enroll", "name"]].drop_duplicates("enroll").set_index("enroll").name
-    source = marks.copy()
-    source.insert(0, "Student name", source.enroll.map(identity))
-    source.insert(1, "Term", term)
-    source_columns = ["enroll", "Student name", "Term", "code", "Subject", "total"]
-    source_columns += [column for column in ("ise", "mse", "internal", "int", "ese", "poe", "other")
-                       if column in source and source[column].notna().any()]
-    source_columns += [column for column in ("grade", "status", "credits", "earned") if column in source]
-    source = source[source_columns].rename(columns={
-        "enroll": "Enrollment", "code": "Course code", "total": "Marks",
-        "ise": "ISE", "mse": "MSE", "internal": "Internal", "int": "INT",
-        "ese": "ESE", "poe": "POE", "other": "Other marks",
-        "grade": "Grade", "status": "Status", "credits": "Credits", "earned": "Credits earned",
-    })
-    source_headers = list(source.columns)
-    for col, title in enumerate(source_headers, 1):
-        source_sheet.cell(1, col, title)
-    for row_idx, values in enumerate(source.itertuples(index=False, name=None), 2):
-        for col, value in enumerate(values, 1):
-            source_sheet.cell(row_idx, col, None if pd.isna(value) else value)
-    format_table(source_sheet, 1, last_col=len(source_headers), freeze="C2")
-    for col, title in enumerate(source_headers, 1):
-        source_sheet.column_dimensions[L(col)].width = min(30, max(13, len(str(title)) + 3))
-    source_sheet.column_dimensions["A"].width = 20
-    source_sheet.column_dimensions["B"].width = 26
-    source_sheet.column_dimensions["E"].width = 30
-
-    notes = [
-        ("About this workbook", "Generated from the active uploaded result workbook after its data checks."),
-        ("Ranking metric", f"Students are ordered by {metric_name}; SGPA and CGPA are included separately when the source provides them."),
-        ("Source fields", "Subject marks, grades, statuses, credits, and identifiers are carried over from the parsed source sheet."),
-        ("Unknown maximum marks", "A blank maximum or average percentage means the source workbook did not provide a reliable maximum; no maximum was guessed."),
-        ("Outcome rules", "No institution-specific grade bands or pass thresholds are invented. Outcomes shown here come from the sheet or the subject-level statuses."),
-        ("Navigation", "Result_Analysis freezes student identifiers and the header row. subjectwise and Data freeze their headers for scrolling."),
-    ]
-    notes_sheet.sheet_view.showGridLines = False
-    notes_sheet["A1"] = "Report notes"
-    notes_sheet["A1"].font = title_font
-    for row_idx, (heading, text) in enumerate(notes, 3):
-        notes_sheet.cell(row_idx, 1, heading).font = Font(name="Aptos", size=10, bold=True, color=navy)
-        notes_sheet.cell(row_idx, 2, text).font = body_font
-        notes_sheet.cell(row_idx, 2).alignment = Alignment(wrap_text=True, vertical="top")
-        notes_sheet.row_dimensions[row_idx].height = 34
-    notes_sheet.column_dimensions["A"].width = 25
-    notes_sheet.column_dimensions["B"].width = 110
-    notes_sheet.freeze_panes = "A3"
-    notes_sheet.sheet_view.zoomScale = 95
-
-    book._sheets = [result_sheet, overview, source_sheet, notes_sheet]
-    book.active = 0
-    book.calculation.fullCalcOnLoad = True
-    book.calculation.forceFullCalc = True
+    if term not in set(wb.terms.term): raise ValueError(f"Term {term} is not present in the workbook.")
+    subjects = wb.subjects[wb.subjects.term == term].reset_index(drop=True)
+    marks = wb.marks[wb.marks.term == term]
+    tr = wb.terms[wb.terms.term == term].drop(columns="term_n", errors="ignore")
+    ids = list(dict.fromkeys(list(tr.enroll) + list(marks.enroll)))
+    if not ids or subjects.empty or marks.empty: raise ValueError(f"Term {term} has no student or subject records to report.")
+    if marks.duplicated(["enroll", "code"]).any(): raise ValueError(f"Term {term} contains duplicate student-course rows; resolve these before exporting.")
+    S = wb.students[wb.students.enroll.isin(ids)].merge(tr, on="enroll", how="left")
+    if term == wb.terms.sort_values("term_n").iloc[-1].term and not wb.cumulative.empty:   # CGPA belongs to the last term of the file
+        S = S.merge(wb.cumulative.drop(columns=[c for c in ("status",) if c in S], errors="ignore"), on="enroll", how="left", suffixes=("", "_cum"))
+        if "status_cum" in S: S["status"] = S.status_cum
+    # subjects: unique display names, grouped Theory / MDM / OE / Laboratory, source order inside a group
+    seen, items = set(), []
+    for r in subjects.itertuples():
+        name = str(r.label).strip() or str(r.abbr).strip() or str(r.code)
+        if name.casefold() in seen: name = f"{name} [{r.code}]"
+        seen.add(name.casefold()); mx = _max_marks(r, marks[marks.code == r.code].total.max())
+        items.append((f"s{len(items)}", name, mx, _group(r), r.code, r.credits))
+    kinds = {g for *_, g, _, _ in items}
+    groups = [(g, [(k, n, m) for k, n, m, gg, _, _ in items if gg == g]) for g in GROUP_ORDER if g in kinds] if len(kinds) > 1 else [("Subjects", [(k, n, m) for k, n, m, *_ in items])]
+    key_of = {code: k for k, _, _, _, code, _ in items}
+    piv = marks.assign(k=marks.code.map(key_of)).pivot(index="enroll", columns="k", values="total")
+    S = S.merge(piv, left_on="enroll", right_index=True, how="left")
+    counted = [k for k, _, m, _, _, cr in items if not (pd.notna(cr) and cr == 0)]          # 0-credit audit subjects stay visible but out of Total
+    S["total"] = S["total"] if "total" in S and S["total"].notna().any() else S[counted].sum(axis=1, min_count=1)
+    common = set(subjects[subjects.is_common].code) if "is_common" in subjects else {c for *_, c, _ in items}
+    mxs = [m for k, _, m, _, c, _ in items if k in counted and c in common]
+    only_common = all(c in common for k, _, _, _, c, _ in items if k in counted)
+    total_max = sum(mxs) if mxs and only_common and all(m is not None for m in mxs) else None   # optional subjects (MDM / electives) make a sheet-wide maximum ambiguous
+    def outcome(g):
+        v = g.dropna().astype(str).str.strip()
+        return "Fail" if v.eq("Fail").any() else "AB" if v.eq("AB").any() else "Pass" if len(v) and v.eq("Pass").all() else "Unreported"
+    if "status" not in S or S.status.replace({"": None, "nan": None}).isna().all(): S["status"] = S.enroll.map(marks.groupby("enroll").status.apply(outcome)).fillna("No result")
+    S["status"] = S.status.replace({"": None, "nan": None})
+    metric = rank_metric(S)
+    if metric:
+        S["rank"] = S[metric].rank(method="min", ascending=False)
+        S = S.sort_values("rank", kind="stable", na_position="last")
+        S["rank"] = S["rank"].map(lambda v: None if pd.isna(v) else int(v))
+    else: S["rank"] = range(1, len(S) + 1)
+    S["class"] = [_class_of(g) for g in (S[metric] if metric else [float("nan")] * len(S))]
+    S = S.reset_index(drop=True)
+    cols = [("rank", "Rank"), ("enroll", "Student Unique No"), ("name", "Student Name"), ("total", "Total")]
+    if metric: cols.append((metric, metric.upper()))
+    if "grade" in S and S.grade.replace({"": None, "nan": None}).notna().any(): cols.append(("grade", "Grade"))
+    cols += [("status", "Status"), ("class", "Class")]
+    S["grade"] = S["grade"].replace({"nan": None, "": None}) if "grade" in S else None
+    book = Workbook(); ws = book.active; ws.title = "Result_Analysis"
+    how = f"ranked by {metric.upper()}" if metric else "no CGPA / SGPA in the file, so not ranked"
+    _write_table(ws, f"RESULT ANALYSIS - TERM {term}", f"{ds.name}  |  {len(S)} students  |  {how}", S, cols, groups, None, total_max, 3)
+    _subjectwise_sheet(book.create_sheet("SUBJECTWISE"), college, department, term, groups, items, marks)
+    _counts_sheet(book.create_sheet("Counts"), S, metric, college, department, term)
+    bad = S[S.status.astype(str).str.contains("fail", case=False, na=False)]
+    fs = book.create_sheet("Failed_Students")
+    _write_table(fs, f"FAILED STUDENTS - TERM {term}", f"{len(bad)} of {len(S)} students (complete rows copied from Result_Analysis)", bad, cols, groups, None, total_max, 3)
     book.save(path)
     return path
 

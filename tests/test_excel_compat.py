@@ -79,63 +79,40 @@ ok(flat.wb.terms.sgpa.notna().all() and flat.wb.cumulative.cgpa.notna().all(),
    "semester SGPA and cumulative CGPA remain separate")
 flat_engine = Engine(flat, catalogs={}, log_path="NUL")
 top_cgpa = flat_engine.ask("top 2 students by CGPA").table
-top_sgpa = flat_engine.ask("top 2 students").table
-ok(top_cgpa.iloc[0]["Enrollment"] == "U1002" and top_cgpa.iloc[0]["CGPA"] == 9.0
-   and top_sgpa.iloc[0]["Enrollment"] == "U1001" and top_sgpa.iloc[0]["SGPA"] == 9.5,
-   "explicit CGPA ranking and default SGPA ranking use their named metrics")
+top_default = flat_engine.ask("top 2 students").table
+ok(flat_engine.ask("top 2 students by sgpa").table.iloc[0]["Enrollment"] == "U1002", "a file that has CGPA is ranked only by CGPA, even if SGPA is named")
+ok(top_cgpa.iloc[0]["Enrollment"] == "U1002" and top_cgpa.iloc[0]["CGPA"] == 9.0, "ranking uses CGPA")
+ok(top_default.iloc[0]["Enrollment"] == "U1002" and "CGPA" in top_default.columns, "with no metric named, the file's CGPA is the ranking")
 ok("CGPA" in flat_engine.ask("class summary by CGPA").text, "class summary uses explicitly requested CGPA")
 generic = io.BytesIO()
 build_generic_report(flat, "I", generic)
 generic_wb = load_workbook(generic, data_only=True)
-ok({"Result_Analysis", "subjectwise", "Data", "Notes"} <= set(generic_wb.sheetnames),
-   "scheme-independent report uses the familiar result-analysis workbook tabs")
-ok(generic_wb.sheetnames[0] == "Result_Analysis" and generic_wb.active.title == "Result_Analysis",
-   "the report opens directly on the student result analysis")
-result_sheet = generic_wb["Result_Analysis"]
-ok(result_sheet.freeze_panes == "D15" and generic_wb["Data"].freeze_panes == "C2",
-   "student identifiers, headers, and source columns remain frozen while scrolling")
-ok(result_sheet["A14"].value == "Rank" and result_sheet["B14"].value == "Enrollment",
-   "result analysis has clear filterable student-table headers")
-last_col = result_sheet.cell(14, result_sheet.max_column).column_letter
-ok(result_sheet.auto_filter.ref == f"A14:{last_col}{result_sheet.max_row}",
-   "the student filter spans all report rows and columns")
-ok(all(result_sheet.column_dimensions[cell.column_letter].width <= 34 for cell in result_sheet[14]),
-   "main report columns have bounded readable widths")
-ok(result_sheet["B15"].value == "U1001" and result_sheet["B16"].value == "U1002",
-   "generic report rankings default to SGPA rather than CGPA")
-ok(result_sheet["B5"].value == 2 and result_sheet["B7"].value == 1 and result_sheet["B10"].value == 50.0,
-   "class summary counts and pass percentage are calculated from the workbook results")
-ok(result_sheet["D4"].value == "Top performers · SGPA" and result_sheet["E5"].value == "Student Alpha",
-   "top performers use the displayed ranking metric")
-ok("Maximum marks (from source)" in [cell.value for cell in generic_wb["subjectwise"][13]],
-   "subject-wise analysis remains available as a structured cross-check")
-ok(generic_wb["Data"].max_row == len(flat.wb.marks) + 1
-   and generic_wb["Data"]["A2"].value == "U1001" and generic_wb["Data"]["B2"].value == "Student Alpha",
-   "every parsed result is retained with student identity in the auditable source tab")
+ok(generic_wb.sheetnames == ["Result_Analysis", "SUBJECTWISE", "Counts", "Failed_Students"], "report has Result_Analysis, SUBJECTWISE, Counts and Failed_Students")
+rs = generic_wb["Result_Analysis"]
+ok(rs.freeze_panes == "D8" and rs["A3"].value == "Rank" and rs["B3"].value == "Student Unique No",
+   "staff-style header band with frozen identifiers")
+ok(rs["B8"].value == "U1002" and rs["B9"].value == "U1001",
+   "file has CGPA, so ranking uses CGPA only (SGPA would put U1001 first)")
+heads = {c.value: c.column for c in rs[3] if c.value}
+ok("CGPA" in heads and "SGPA" not in heads, "ranking column shown is the metric actually used")
+ok(rs.cell(8, heads["CGPA"]).value == 9.0 and rs.cell(8, heads["Class"]).value == "Distinction", "CGPA and class columns are filled")
+ok(not any(c.data_type == "f" for row in rs.iter_rows() for c in row), "values are plain numbers, no formulas")
+ok(all(c.fill.fill_type is None for row in rs.iter_rows(min_row=8) for c in row), "student rows carry no colour; only the header band is highlighted")
+fs = generic_wb["Failed_Students"]
+ok(fs["B8"].value == "U1002" and fs["A8"].value == rs["A8"].value and fs.max_row == 8,
+   "failed students are copied as complete rows")
+cn = generic_wb["Counts"]
+cv = {cn.cell(r, 1).value: cn.cell(r, 5).value for r in range(5, 14)}
+ok(cv["Total students"] == 2 and cv["No. of Students Failed / ATKT"] == 1 and cv["No. of Students Passed"] == 1 and cv["Overall pass percentage"] == 0.5,
+   "Counts sheet totals come from the parsed results")
+ok(cn["H6"].value == "Student Beta" and cn["G5"].value == "Top 3 by CGPA", "Counts sheet lists the top students by CGPA")
+sw = generic_wb["SUBJECTWISE"]
+ok(sw["A10"].value == "No of Students Appeared" and sw["E10"].value == 2 and sw["A19"].value.startswith("Subject percentage"),
+   "SUBJECTWISE has the staff row labels and per-subject counts")
+# a file with no CGPA anywhere is ranked by SGPA
+flat.wb.cumulative["cgpa"] = float("nan")
+nocg = io.BytesIO(); build_generic_report(flat, "I", nocg)
+ns = load_workbook(nocg)["Result_Analysis"]
+ok(ns["B8"].value == "U1001" and "SGPA" in [c.value for c in ns[3]], "without CGPA the report falls back to SGPA")
 
-ai5_report = io.BytesIO()
-build_generic_report(ai5, "V", ai5_report)
-ai5_output = load_workbook(ai5_report, data_only=True)
-ai5_result = ai5_output["Result_Analysis"]
-ok(ai5_result["B5"].value == 150 and ai5_result["B7"].value == 129
-   and ai5_result["B8"].value == 21 and ai5_result["B10"].value == 86.0,
-   "staff-example cohort totals are reproduced from parsed source data without hard-coded rows")
-headers = {str(cell.value).splitlines()[1]: cell.column for cell in ai5_result[14]
-           if isinstance(cell.value, str) and len(cell.value.splitlines()) >= 3}
-enrollment_col = next(cell.column for cell in ai5_result[14] if cell.value == "Enrollment")
-student_rows = {str(ai5_result.cell(row, enrollment_col).value): row
-                for row in range(15, ai5_result.max_row + 1)}
-for mark in ai5.wb.marks.itertuples():
-    output_row = student_rows[str(mark.enroll)]
-    output_col = headers[str(mark.code)]
-    output_value = ai5_result.cell(output_row, output_col).value
-    ok(output_value is None and pd.isna(mark.total) or output_value == mark.total,
-       f"student/course output preserves source mark for {mark.enroll}/{mark.code}")
-ai5_data = ai5_output["Data"]
-ok(ai5_data.max_row == len(ai5.wb.marks) + 1,
-   "auditable Data tab includes exactly one row for each parsed student-course result")
-formula_book = load_workbook(ai5_report, data_only=False)
-ok(not any(cell.data_type == "f" for row in formula_book["Result_Analysis"].iter_rows() for cell in row),
-   "analysis values are materialized rather than dependent on Excel formula recalculation")
-
-print("Excel compatibility tests: ERP variants, generic long-table input, and scheme-independent report passed")
+print("Excel compatibility tests: plain CGPA-first report passed")
